@@ -15,6 +15,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 )
 
+// OK logs unexpected errors and returns `true` for non-errors
 func OK(err error) bool {
 	if err != nil {
 		log.Printf("unexpected error: %s", err)
@@ -25,8 +26,11 @@ func OK(err error) bool {
 }
 
 type Bot struct {
-	API    *slack.Client
-	User   string
+	API  *slack.Client
+	User string
+
+	// Events retrieves incoming Slack events; type switch these to e.g. *slackevents.MessageEvent to
+	// read incoming messages on channels.
 	Events chan slackevents.EventsAPIInnerEvent
 
 	listener     *http.Server
@@ -35,6 +39,15 @@ type Bot struct {
 	cacheLock    sync.Mutex
 }
 
+// New returns a *Bot, only if the provided xoxb- key is valid and retrieves a bot user; it should
+// have at least channels.read, channels.history, chat.write, and users.read; `localURI` is the
+// http://host:port/path that the event callback server will listen on.
+//
+// If New returns non-nil Bot, it's set up the Bot.Events channel and is attempting to listen on
+// `localURI` in a goroutine, which will close the Bot.Events channel if listening for connections
+// ever fails.
+//
+// Read Bot.Events for incoming events. Use Bot.API to make direct calls to Slack.
 func New(xoxb, localURI string) (*Bot, error) {
 	url, err := url.Parse(localURI)
 	if err != nil {
@@ -72,6 +85,7 @@ func New(xoxb, localURI string) (*Bot, error) {
 	return ret, nil
 }
 
+// handle incoming Slack events
 func (b *Bot) eventInbound(w http.ResponseWriter, r *http.Request) {
 	buf, err := ioutil.ReadAll(r.Body)
 	if !OK(err) {
@@ -105,10 +119,15 @@ func (b *Bot) eventInbound(w http.ResponseWriter, r *http.Request) {
 	b.Events <- outerEv.InnerEvent
 }
 
+// Stop the server and wind down its associated goroutine
 func (b *Bot) Stop() {
 	b.listener.Shutdown(context.TODO())
 }
 
+// GetUser retrieves the User associated with a Slack ID.
+//
+// This is a convenience method (you can just use Bot.API to make API calls) that
+// caches results; it returns no errors, but just nil Users when calls fail.
 func (b *Bot) GetUser(id string) *slack.User {
 	b.cacheLock.Lock()
 	defer b.cacheLock.Unlock()
@@ -126,6 +145,7 @@ func (b *Bot) GetUser(id string) *slack.User {
 	return u
 }
 
+// GetUserName maps Slack IDs to usernames.
 func (b *Bot) GetUserName(id string) string {
 	u := b.GetUser(id)
 	if u == nil {
@@ -134,6 +154,10 @@ func (b *Bot) GetUserName(id string) string {
 	return u.Name
 }
 
+// GetChannel retrieves the Channel associated with a Slack ID.
+//
+// This is a convenience method (you can just use Bot.API to make API calls) that
+// caches results; it returns no errors, but just nil Channels when calls fail.
 func (b *Bot) GetChannel(id string) *slack.Channel {
 	b.cacheLock.Lock()
 	defer b.cacheLock.Unlock()
@@ -151,6 +175,7 @@ func (b *Bot) GetChannel(id string) *slack.Channel {
 	return c
 }
 
+// GetChannelName maps Slack IDs to channel names.
 func (b *Bot) GetChannelName(id string) string {
 	c := b.GetChannel(id)
 	if c == nil {
